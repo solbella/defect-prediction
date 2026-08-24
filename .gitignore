@@ -1,0 +1,13 @@
+# 공개 저장소에 올리지 않는 파일
+secom_project_master/
+data/default+of+credit+card+clients.zip
+.claude/settings.local.json
+
+# Jupyter / Python 캐시 (앞으로 생길 수 있어서 미리 막아둠)
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+
+# OS 잡파일
+.DS_Store
+Thumbs.db
