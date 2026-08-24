@@ -33,7 +33,7 @@
 | `data/day03_greenhouse.csv` | 스마트팜 온실 출하 기록 | 2000행 × 13열 | `result` (상품/등외, 등외 6.95%) |
 | `data/day04_battery.csv` | 배터리 셀 최종검사 기록 | 2847행 × 14열 | `result` (합격/불합격, 불합격 4.67%) |
 | `data/day05_coldchain.csv` | 냉동 물류창고 온습도·설비 로그 | 3412행 × 12열 | `disposal` (정상/폐기, 폐기 3.52%) |
-| `data/16_machine-failure.csv` | 설비(기계) 운전 조건과 고장 기록 | 10000행 × 7열 | `Machine failure` (정상/고장, 고장 3.39%) |
+| `data/16_machine-failure.csv` | [AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset) (UCI) 축소판 | 10000행 × 7열 | `Machine failure` (정상/고장, 고장 3.39%) |
 | `data/default_of_credit_card_clients.csv` | 대만 신용카드 고객 채무불이행 (UCI) | 30000행 × 25열 (`header=1`로 읽기) | `default payment next month` (0/1, 불이행 22.12%) |
 
 `04_secom.csv`를 제외한 나머지는 각 day의 미션/자유 실습에서 쓰인 보조 데이터셋입니다.
@@ -48,6 +48,47 @@
 | day04 lab10~12 | `class_weight="balanced"` 불균형 대응, `GridSearchCV` 하이퍼파라미터 탐색, `cross_validate` 교차검증 |
 | day05 lab13~15 | IsolationForest·LocalOutlierFactor 이상탐지, 두 방법 겹침 비교, 이동평균·관리도로 시간 흐름 보기 |
 | day06 project_v1 | 설비 고장 예측 — 문제 정의부터 베이스라인·개선 모델·결과 요약까지 개인 진행 |
+
+## 개인 프로젝트 상세 — day06/project_v1: 설비 고장 예측
+
+**한 문장**: 설비의 운전 조건(온도·회전수·토크·공구마모)으로, 실제 고장이 나기 전에 고장 가능성이 높은 상태를 미리 골라낸다.
+
+| 물음 | 답 |
+|---|---|
+| 누가 쓰나 | 설비 유지보수(정비) 담당자 |
+| 무엇을 결정하나 | 이 설비를 지금 멈춰서 점검·정비할지, 그대로 가동할지 |
+| 언제 결정하나 | 센서값(온도·회전수·토크·공구마모)이 들어오는 가동 중, 실제 고장이 나기 전 |
+| 판단이 늦으면 | 가동 중 갑자기 멈춰서(다운타임) 생산이 끊기고, 부품·공구 손상이 커지며 수리 비용과 정지 시간이 함께 늘어난다 |
+
+### 사용 데이터
+
+- 파일: `data/16_machine-failure.csv` (10000행 × 7열)
+- 데이터 출처: [AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset) (UCI, 합성 데이터). 수업에서는 원본 14열 중 7열만 남긴 정제본을 받았음 — [Kaggle 미러](https://www.kaggle.com/datasets/abdulbasit551/predictive-maintenance-ai4i-2020-uci)도 있음
+- 입력으로 쓴 열: 숫자로 된 측정 열 5개 (`Air temperature [K]`, `Process temperature [K]`, `Rotational speed [rpm]`, `Torque [Nm]`, `Tool wear [min]`)
+- 결과 열: `Machine failure` (정상/고장, 고장 339건 · 3.39%)
+
+### 결과
+
+| | 정확도 | 지목 | 그중 진짜 | 정밀도 | 재현율 |
+|---|---|---|---|---|---|
+| 기준 모델 (전부 정상) | 96.6% | 0건 | 0건 | 0.000 | 0.000 |
+| 내 모델 v1 (로지스틱 회귀) | 96.85% | 13건 | 9건 | 0.692 | 0.132 |
+
+시험용에 실제로 있던 고장은 68건. 정확도는 기준보다 0.25%p 올랐고, 지목한 13건 중 9건이 실제 고장이었다(정밀도 0.692). 다만 68건 중 59건은 못 잡았다(재현율 0.132). 정확도 수치 하나만으로는 판단하기 어려운 문제였다.
+
+### 한계
+
+| 한계 | 근거 |
+|---|---|
+| 고장 건수가 절대적으로 적음 | 전체 고장 339건(3.39%). 시험용 20%로 나누면 약 68건만 남아, 재현율·정밀도 값이 나눌 때마다 다르게 관찰될 수 있음 |
+| 조건 열 사이에서 높은 상관관계가 관찰됨 | `Air temperature`↔`Process temperature` 상관계수 0.876, `Rotational speed`↔`Torque` 상관계수 -0.875로 관찰됨 |
+| 결측치·중복 없이 정제된 데이터 | 결측치 0건, 중복 행 0건 — 실제 현장 데이터보다 깨끗해서, 같은 성능이 실제 현장에서도 재현될지는 별개 문제 |
+
+### 다음에 할 일
+
+1. 드문 쪽을 무겁게 세는 설정으로 지목 건수를 늘려보기
+2. 지목을 늘렸을 때 헛걸음이 얼마나 느는지 같이 재기
+3. 재검사 한 건에 드는 비용을 알아보고, 어느 쪽이 나은지 정하기
 
 ## 환경
 
