@@ -2,6 +2,9 @@
 secom_project_master/
 data/default+of+credit+card+clients.zip
 .claude/settings.local.json
+.env
+**/.env
+발표자료_김일주_B트랙/
 
 # Jupyter / Python 캐시 (앞으로 생길 수 있어서 미리 막아둠)
 .ipynb_checkpoints/
