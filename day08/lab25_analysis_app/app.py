@@ -2,18 +2,30 @@ import os
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 import seaborn as sns
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-plt.rcParams["font.family"] = "Malgun Gothic"
 plt.rcParams["axes.unicode_minus"] = False
+
+_KOREAN_FONT_CANDIDATES = [
+    r"C:\Windows\Fonts\malgun.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+]
+for _font_path in _KOREAN_FONT_CANDIDATES:
+    if os.path.exists(_font_path):
+        font_manager.fontManager.addfont(_font_path)
+        plt.rcParams["font.family"] = font_manager.FontProperties(fname=_font_path).get_name()
+        break
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -176,78 +188,110 @@ with tab2:
 
 with tab3:
     if "X_train" not in st.session_state:
-        st.write("2번 탭에서 적용을 먼저 눌러주세요")
+        st.write("전처리를 먼저 해주세요")
     else:
-        model_choice = st.selectbox("어떤 모델을 쓸까요", ["로지스틱 회귀", "결정나무"], key="model_choice")
+        model_choice = st.selectbox(
+            "어떤 모델을 쓸까요", ["로지스틱 회귀", "의사결정나무", "랜덤 포레스트"], key="model_choice"
+        )
+        use_weight = st.toggle("적은 쪽에 가중치 주기", value=False, key="use_weight")
 
-        if st.button("학습하기"):
+        if st.button("학습"):
             X_train = st.session_state["X_train"]
+            X_test = st.session_state["X_test"]
             y_train = st.session_state["y_train"]
+            y_test = st.session_state["y_test"]
 
             scaler = StandardScaler()
             X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test)
+
+            class_weight = "balanced" if use_weight else None
 
             if model_choice == "로지스틱 회귀":
-                model = LogisticRegression(max_iter=1000)
+                model = LogisticRegression(max_iter=1000, class_weight=class_weight)
                 learning_point = (
                     "각 변수에 가중치(계수)를 곱해서 더한 값을 0~1 사이 확률로 바꿔 판단합니다. "
                     "계수의 절댓값이 클수록 그 변수가 판단에 크게 작용합니다."
                 )
-            else:
-                model = DecisionTreeClassifier(random_state=42)
+            elif model_choice == "의사결정나무":
+                model = DecisionTreeClassifier(random_state=42, class_weight=class_weight)
                 learning_point = (
                     "한 번에 변수 하나를 골라 기준값보다 큰지 작은지로 데이터를 둘로 나누는 것을 반복합니다. "
                     "어떤 변수로 얼마나 자주 나눴는지가 변수 중요도로 남습니다."
                 )
+            else:
+                model = RandomForestClassifier(random_state=42, class_weight=class_weight)
+                learning_point = (
+                    "여러 개의 의사결정나무를 조금씩 다르게 만들어서 다수결로 판단합니다. "
+                    "나무 하나만 쓸 때보다 결과가 안정적인 경향이 있습니다."
+                )
             model.fit(X_train_scaled, y_train)
+            y_pred = model.predict(X_test_scaled)
+
+            baseline_value = y_train.mode()[0]
+            baseline_pred = pd.Series(baseline_value, index=y_test.index)
+
+            compare_table = pd.DataFrame({
+                "구분": ["기준 모델(전부 정상)", f"내 모델({model_choice})"],
+                "정확도": [
+                    round(accuracy_score(y_test, baseline_pred) * 100, 2),
+                    round(accuracy_score(y_test, y_pred) * 100, 2),
+                ],
+                "정밀도": [
+                    round(precision_score(y_test, baseline_pred, zero_division=0), 3),
+                    round(precision_score(y_test, y_pred, zero_division=0), 3),
+                ],
+                "재현율": [
+                    round(recall_score(y_test, baseline_pred, zero_division=0), 3),
+                    round(recall_score(y_test, y_pred, zero_division=0), 3),
+                ],
+                "F1": [
+                    round(f1_score(y_test, baseline_pred, zero_division=0), 3),
+                    round(f1_score(y_test, y_pred, zero_division=0), 3),
+                ],
+            })
 
             st.session_state["scaler"] = scaler
             st.session_state["model"] = model
+            st.session_state["compare_table"] = compare_table
             st.write("학습이 끝났습니다")
             st.write(f"학습 포인트 ({model_choice}): {learning_point}")
+            st.dataframe(compare_table)
 
 with tab4:
     if "model" not in st.session_state:
-        st.write("3번 탭에서 학습을 먼저 해주세요")
+        st.write("학습을 먼저 해주세요")
     else:
-        X_train = st.session_state["X_train"]
         X_test = st.session_state["X_test"]
-        y_train = st.session_state["y_train"]
         y_test = st.session_state["y_test"]
         scaler = st.session_state["scaler"]
         model = st.session_state["model"]
 
         y_pred = model.predict(scaler.transform(X_test))
+        compare_table = st.session_state["compare_table"]
 
-        baseline_value = y_train.mode()[0]
-        baseline_pred = pd.Series(baseline_value, index=y_test.index)
-
-        model_name = st.session_state.get("model_choice", "로지스틱 회귀")
-        compare_table = pd.DataFrame({
-            "구분": ["기준 모델(다수 값만 답함)", f"내 모델({model_name})"],
-            "정확도": [
-                round(accuracy_score(y_test, baseline_pred) * 100, 2),
-                round(accuracy_score(y_test, y_pred) * 100, 2),
-            ],
-            "정밀도": [
-                round(precision_score(y_test, baseline_pred, zero_division=0), 3),
-                round(precision_score(y_test, y_pred, zero_division=0), 3),
-            ],
-            "재현율": [
-                round(recall_score(y_test, baseline_pred, zero_division=0), 3),
-                round(recall_score(y_test, y_pred, zero_division=0), 3),
-            ],
-        })
-        st.session_state["compare_table"] = compare_table
-
-        st.write("기준 모델과 내 모델을 견줍니다")
+        st.write("기준 모델과 내 모델을 견줍니다 (3번 탭 학습 결과)")
         st.dataframe(compare_table)
 
         figures_dir = os.path.join(os.path.dirname(__file__), "figures")
         os.makedirs(figures_dir, exist_ok=True)
 
+        fig, ax = plt.subplots()
+        ax.scatter(y_test, y_pred, alpha=0.4)
+        min_val = min(float(y_test.min()), float(y_pred.min()))
+        max_val = max(float(y_test.max()), float(y_pred.max()))
+        ax.plot([min_val, max_val], [min_val, max_val], color="red", linestyle="--")
+        ax.set_xlabel("실제값")
+        ax.set_ylabel("예측값")
+        ax.set_title("실제값과 예측값")
+        fig.tight_layout()
+        fig.savefig(os.path.join(figures_dir, "actual_vs_predicted.png"))
+        st.pyplot(fig)
+
+        X_train = st.session_state["X_train"]
+
         if hasattr(model, "coef_"):
-            importance = pd.Series(model.coef_[0], index=X_train.columns).abs().sort_values(ascending=False)
+            importance = pd.Series(model.coef_.ravel(), index=X_train.columns).abs().sort_values(ascending=False)
             importance_label = "영향 크기(계수 절댓값)"
         else:
             importance = pd.Series(model.feature_importances_, index=X_train.columns).sort_values(ascending=False)
@@ -263,12 +307,12 @@ with tab4:
         st.pyplot(fig1)
         st.write("어느 항목이 판단에 많이 쓰였는지 보여줍니다")
 
-        cm = confusion_matrix(y_test, y_pred)
+        cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
         fig2, ax2 = plt.subplots()
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax2)
         ax2.set_xlabel("예측")
         ax2.set_ylabel("실제")
-        ax2.set_title("혼동행렬 (내 모델)")
+        ax2.set_title("혼동행렬")
         fig2.tight_layout()
         fig2.savefig(os.path.join(figures_dir, "confusion_matrix.png"))
         st.pyplot(fig2)
@@ -286,6 +330,35 @@ with tab4:
         st.pyplot(fig3)
         st.write("기준 모델과 내 모델의 점수를 나란히 놓고 비교합니다")
 
+        st.write("문턱을 옮겨서 다시 잘라봅니다 (다시 학습하지 않습니다)")
+        y_proba = model.predict_proba(scaler.transform(X_test))[:, 1]
+        threshold = st.slider("문턱", min_value=0.05, max_value=0.95, value=0.5, step=0.05)
+        st.write(f"지금 문턱: {threshold}")
+
+        y_pred_th = (y_proba >= threshold).astype(int)
+        cm_th = confusion_matrix(y_test, y_pred_th, labels=[0, 1])
+        tn_th, fp_th, fn_th, tp_th = cm_th.ravel()
+
+        st.write(f"지목한 건수: {int(y_pred_th.sum())}")
+        st.write(f"그중 진짜 건수: {int(tp_th)}")
+        st.write(f"놓친 건수: {int(fn_th)}")
+
+        threshold_score_table = pd.DataFrame({
+            "지표": ["정밀도", "재현율", "F1"],
+            "값": [
+                round(precision_score(y_test, y_pred_th, zero_division=0), 3),
+                round(recall_score(y_test, y_pred_th, zero_division=0), 3),
+                round(f1_score(y_test, y_pred_th, zero_division=0), 3),
+            ],
+        })
+        st.dataframe(threshold_score_table)
+
+        threshold_confusion_table = pd.DataFrame({
+            "구분": ["잡은 것", "놓친 것", "헛경보", "정상을 정상이라 한 것"],
+            "건수": [int(tp_th), int(fn_th), int(fp_th), int(tn_th)],
+        })
+        st.dataframe(threshold_confusion_table)
+
 with tab5:
     if not api_key:
         st.write("열쇠가 없습니다")
@@ -299,7 +372,7 @@ with tab5:
                 "각 줄은 두 문장을 넘지 않게. 숫자를 새로 만들지 말고 표에 있는 값만 써. "
                 "1) 무엇을 판단하려 했나 2) 데이터를 어떻게 손봤나 "
                 "3) 어떤 모델을 왜 골랐나 4) 결과가 어땠나(잘된 것과 놓친 것을 같이) "
-                "5) 문턱을 옮기면 무엇이 맞바뀌나\n\n"
+                "5) 표에 있는 지표를 근거로 아쉬운 점이나 다음에 해볼 것\n\n"
                 f"{compare_table.to_string(index=False)}"
             )
             try:
