@@ -7,10 +7,28 @@ from datetime import datetime
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
+from dotenv import load_dotenv
+import google.generativeai as genai
 
 plt.rcParams["font.family"] = "Malgun Gothic"
 plt.rcParams["axes.unicode_minus"] = False
+
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
+
+def get_api_key():
+    try:
+        key = st.secrets.get("GOOGLE_API_KEY")
+    except Exception:
+        key = None
+    if not key:
+        key = os.getenv("GOOGLE_API_KEY")
+    return key
+
+
+api_key = get_api_key()
 
 st.set_page_config(page_title="설비 측정값으로 고장을 미리 알아채기")
 
@@ -157,30 +175,56 @@ with tab2:
                     st.dataframe(split_table)
 
 with tab3:
-    st.write("여기는 아직 비어 있습니다")
-
-with tab4:
     if "X_train" not in st.session_state:
         st.write("2번 탭에서 적용을 먼저 눌러주세요")
+    else:
+        model_choice = st.selectbox("어떤 모델을 쓸까요", ["로지스틱 회귀", "결정나무"], key="model_choice")
+
+        if st.button("학습하기"):
+            X_train = st.session_state["X_train"]
+            y_train = st.session_state["y_train"]
+
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+
+            if model_choice == "로지스틱 회귀":
+                model = LogisticRegression(max_iter=1000)
+                learning_point = (
+                    "각 변수에 가중치(계수)를 곱해서 더한 값을 0~1 사이 확률로 바꿔 판단합니다. "
+                    "계수의 절댓값이 클수록 그 변수가 판단에 크게 작용합니다."
+                )
+            else:
+                model = DecisionTreeClassifier(random_state=42)
+                learning_point = (
+                    "한 번에 변수 하나를 골라 기준값보다 큰지 작은지로 데이터를 둘로 나누는 것을 반복합니다. "
+                    "어떤 변수로 얼마나 자주 나눴는지가 변수 중요도로 남습니다."
+                )
+            model.fit(X_train_scaled, y_train)
+
+            st.session_state["scaler"] = scaler
+            st.session_state["model"] = model
+            st.write("학습이 끝났습니다")
+            st.write(f"학습 포인트 ({model_choice}): {learning_point}")
+
+with tab4:
+    if "model" not in st.session_state:
+        st.write("3번 탭에서 학습을 먼저 해주세요")
     else:
         X_train = st.session_state["X_train"]
         X_test = st.session_state["X_test"]
         y_train = st.session_state["y_train"]
         y_test = st.session_state["y_test"]
+        scaler = st.session_state["scaler"]
+        model = st.session_state["model"]
 
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-
-        model = LogisticRegression(max_iter=1000)
-        model.fit(X_train_scaled, y_train)
-        y_pred = model.predict(X_test_scaled)
+        y_pred = model.predict(scaler.transform(X_test))
 
         baseline_value = y_train.mode()[0]
         baseline_pred = pd.Series(baseline_value, index=y_test.index)
 
+        model_name = st.session_state.get("model_choice", "로지스틱 회귀")
         compare_table = pd.DataFrame({
-            "구분": ["기준 모델(다수 값만 답함)", "내 모델(로지스틱 회귀)"],
+            "구분": ["기준 모델(다수 값만 답함)", f"내 모델({model_name})"],
             "정확도": [
                 round(accuracy_score(y_test, baseline_pred) * 100, 2),
                 round(accuracy_score(y_test, y_pred) * 100, 2),
@@ -194,19 +238,28 @@ with tab4:
                 round(recall_score(y_test, y_pred, zero_division=0), 3),
             ],
         })
+        st.session_state["compare_table"] = compare_table
+
         st.write("기준 모델과 내 모델을 견줍니다")
         st.dataframe(compare_table)
 
-        os.makedirs("figures", exist_ok=True)
+        figures_dir = os.path.join(os.path.dirname(__file__), "figures")
+        os.makedirs(figures_dir, exist_ok=True)
 
-        importance = pd.Series(model.coef_[0], index=X_train.columns).abs().sort_values(ascending=False)
+        if hasattr(model, "coef_"):
+            importance = pd.Series(model.coef_[0], index=X_train.columns).abs().sort_values(ascending=False)
+            importance_label = "영향 크기(계수 절댓값)"
+        else:
+            importance = pd.Series(model.feature_importances_, index=X_train.columns).sort_values(ascending=False)
+            importance_label = "영향 크기(변수 중요도)"
+
         fig1, ax1 = plt.subplots()
         sns.barplot(x=importance.values, y=importance.index, ax=ax1)
-        ax1.set_xlabel("영향 크기(계수 절댓값)")
+        ax1.set_xlabel(importance_label)
         ax1.set_ylabel("변수")
         ax1.set_title("중요 변수")
         fig1.tight_layout()
-        fig1.savefig("figures/importance.png")
+        fig1.savefig(os.path.join(figures_dir, "importance.png"))
         st.pyplot(fig1)
         st.write("어느 항목이 판단에 많이 쓰였는지 보여줍니다")
 
@@ -217,7 +270,7 @@ with tab4:
         ax2.set_ylabel("실제")
         ax2.set_title("혼동행렬 (내 모델)")
         fig2.tight_layout()
-        fig2.savefig("figures/confusion_matrix.png")
+        fig2.savefig(os.path.join(figures_dir, "confusion_matrix.png"))
         st.pyplot(fig2)
         st.write("맞춘 것과 틀린 것이 각각 몇 건인지 보여줍니다")
 
@@ -229,11 +282,32 @@ with tab4:
         ax3.set_ylabel("값 (0~1로 맞춤)")
         ax3.set_title("기준 모델과 내 모델 점수 비교")
         fig3.tight_layout()
-        fig3.savefig("figures/compare_bar.png")
+        fig3.savefig(os.path.join(figures_dir, "compare_bar.png"))
         st.pyplot(fig3)
         st.write("기준 모델과 내 모델의 점수를 나란히 놓고 비교합니다")
 
 with tab5:
-    st.write("여기는 아직 비어 있습니다")
+    if not api_key:
+        st.write("열쇠가 없습니다")
+    elif "compare_table" not in st.session_state:
+        st.write("4번 탭에서 결과를 먼저 확인해주세요")
+    else:
+        if st.button("리포트 만들기"):
+            compare_table = st.session_state["compare_table"]
+            prompt = (
+                "다음은 설비 고장 예측 모델의 결과 표입니다. 이 표만 보고 다섯 줄로 리포트를 써줘. "
+                "각 줄은 두 문장을 넘지 않게. 숫자를 새로 만들지 말고 표에 있는 값만 써. "
+                "1) 무엇을 판단하려 했나 2) 데이터를 어떻게 손봤나 "
+                "3) 어떤 모델을 왜 골랐나 4) 결과가 어땠나(잘된 것과 놓친 것을 같이) "
+                "5) 문턱을 옮기면 무엇이 맞바뀌나\n\n"
+                f"{compare_table.to_string(index=False)}"
+            )
+            try:
+                genai.configure(api_key=api_key)
+                gmodel = genai.GenerativeModel("gemini-3.6-flash")
+                response = gmodel.generate_content(prompt)
+                st.write(response.text)
+            except Exception as e:
+                st.write(f"리포트를 만들지 못했습니다: {e}")
 
 st.write("현재 시각:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
