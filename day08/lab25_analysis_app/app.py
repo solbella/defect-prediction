@@ -17,6 +17,7 @@ import google.generativeai as genai
 plt.rcParams["axes.unicode_minus"] = False
 
 _KOREAN_FONT_CANDIDATES = [
+    os.path.join(os.path.dirname(__file__), "fonts", "NanumGothic-Regular.ttf"),
     r"C:\Windows\Fonts\malgun.ttf",
     "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
